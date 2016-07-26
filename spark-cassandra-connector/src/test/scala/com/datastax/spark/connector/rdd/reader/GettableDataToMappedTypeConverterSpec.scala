@@ -347,36 +347,27 @@ class GettableDataToMappedTypeConverterSpec extends FlatSpec with Matchers {
     user.getAddress.getNumber shouldBe 5
   }
 
-  class AddressWithLongBean {
-    private[this] var street: String = null
-    def getStreet: String = street
-    def setStreet(street: String): Unit = { this.street = street }
-
+  class LongBean {
     private[this] var number: java.lang.Long = null
     def getNumber: java.lang.Long = number
     def setNumber(number: java.lang.Long): Unit = { this.number = number }
   }
 
-  class UserBeanWithLongAddress {
-    private[this] var login: String = null
-    def getLogin: String = login
-    def setLogin(login: String): Unit = { this.login = login }
-
-    private[this] var address: AddressWithLongBean = null
-    def getAddress: AddressWithLongBean = address
-    def setAddress(address: AddressWithLongBean) = { this.address = address }
+  class NestedLongBean {
+    private[this] var long: LongBean = null
+    def getLong: LongBean = long
+    def setLong(l: LongBean) = { this.long = long }
   }
 
-  it should "convert a CassandraRow with UDTs with Long null values to nested JavaBeans" in {
-    implicit val cm: ColumnMapper[UserBeanWithLongAddress] = new JavaBeanColumnMapper[UserBeanWithLongAddress]
-    val address = UDTValue.fromMap(Map("street" -> "street", "number" -> null))
-    val row = CassandraRow.fromMap(Map("login" -> "foo", "address" -> address))
-    val converter = new GettableDataToMappedTypeConverter[UserBeanWithLongAddress](
-      userTable, userTable.columnRefs)
+  it should "convert a CassandraRow with UDTs with null Long values to nested JavaBeans" in {
+    implicit val cm: ColumnMapper[NestedLongBean] = new JavaBeanColumnMapper[NestedLongBean]
+    val long = UDTValue.fromMap(Map("number" -> null))
+    val row = CassandraRow.fromMap(Map("long" -> long))
+    val converter = new GettableDataToMappedTypeConverter[NestedLongBean](
+      userTable, userTable.columnRefs
+    )
     val user = converter.convert(row)
-    user.getLogin shouldBe "foo"
-    user.getAddress.getStreet shouldBe "street"
-    user.getAddress.getNumber shouldBe null
+    user.getLong shouldBe null
   }
 
   class UnknownType
