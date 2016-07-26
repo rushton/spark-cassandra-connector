@@ -400,7 +400,7 @@ class TypeConverterTest {
   }
 
   @Test
-  def testCassandraOptionToNull() {
+  def testCassandraOptionToNullInt() {
     val c = new TypeConverter.OptionToNullConverter(TypeConverter.IntConverter)
     assertEquals(Unset, c.convert(CassandraOption.Unset))
     assertEquals(null, c.convert(CassandraOption.Null))
@@ -473,6 +473,13 @@ class TypeConverterTest {
     assertEquals(2, chainedConverter.convert("2"))
     assertEquals(3, chainedConverter.convert(Some(3)))
     assertEquals(0, chainedConverter.convert(None))
+  }
+
+  @Test
+  def testChainedConverterNullableTypes() {
+      val standardConverter = TypeConverter.forType[java.lang.Long]
+
+      assertEquals(null, standardConverter.convert(null))
   }
 
   case class EMail(email: String)

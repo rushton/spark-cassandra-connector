@@ -8,6 +8,7 @@ import java.util.{Calendar, Date, GregorianCalendar, TimeZone, UUID}
 import scala.collection.JavaConversions._
 import scala.collection.immutable.{TreeMap, TreeSet}
 import scala.reflect.runtime.universe._
+import scala.util.{Try, Success, Failure}
 
 import org.apache.commons.lang3.tuple
 import org.apache.spark.sql.catalyst.ReflectionLock.SparkReflectionLock
@@ -62,7 +63,19 @@ trait NullableTypeConverter[T <: AnyRef] extends TypeConverter[T] {
   * This way you can extend functionality of any converter to support new input types. */
 class ChainedTypeConverter[T](converters: TypeConverter[T]*) extends TypeConverter[T] {
   def targetTypeTag = converters.head.targetTypeTag
-  def convertPF = converters.map(_.convertPF).reduceLeft(_ orElse _)
+  def convertPF = null
+  override def convert(obj: Any): T = {
+      converters.toStream
+                .map(x => Try(x.convert(obj)))
+                .collectFirst[T]({
+                    case Success(v) => v
+                }).getOrElse({
+                    if (obj != null)
+                      throw new TypeConversionException(s"Cannot convert object $obj of type ${obj.getClass} to $targetTypeName.")
+                    else
+                      throw new TypeConversionException(s"Cannot convert object $obj to $targetTypeName.")
+                })
+  }
 }
 
 /** Defines a set of converters and implicit functions used to look up an appropriate converter for
@@ -498,7 +511,7 @@ object TypeConverter {
       implicit val vTag = vc.targetTypeTag
       implicitly[TypeTag[(K, V)]]
     }
-    
+
     def convertPF = {
       case TupleValue(k, v) => (kc.convert(k), vc.convert(v))
       case (k, v) => (kc.convert(k), vc.convert(v))
@@ -522,7 +535,7 @@ object TypeConverter {
 
     def convertPF = {
       case TupleValue(a1, a2, a3) => (c1.convert(a1), c2.convert(a2), c3.convert(a3))
-      case (a1, a2, a3) => (c1.convert(a1), c2.convert(a2), c3.convert(a3)) 
+      case (a1, a2, a3) => (c1.convert(a1), c2.convert(a2), c3.convert(a3))
     }
   }
 
