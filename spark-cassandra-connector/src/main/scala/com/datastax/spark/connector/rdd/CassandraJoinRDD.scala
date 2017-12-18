@@ -133,11 +133,19 @@ class CassandraJoinRDD[L, R] private[connector](
         def onSuccess(rs: ResultSet) {
           val resultSet = new PrefetchingResultSetIterator(rs, fetchSize)
           val columnMetaData = CassandraRowMetadata.fromResultSet(columnNames, rs);
-          val rightSide = resultSet.map(rowReader.read(_, columnMetaData))
+
+          val rightSide = resultSet.map(r => {
+            try {
+              rowReader.read(r, columnMetaData)
+            } catch {
+              case e:com.datastax.driver.core.exceptions.InvalidTypeException => { None.asInstanceOf[R] }
+              case e:Throwable => throw e
+            }
+          })
           resultFuture.set(leftSide.zip(rightSide))
         }
         def onFailure(throwable: Throwable) {
-          resultFuture.setException(throwable)
+            resultFuture.setException(throwable)
         }
       })
       resultFuture
@@ -146,7 +154,22 @@ class CassandraJoinRDD[L, R] private[connector](
       rateLimiter.maybeSleep(1)
       pairWithRight(left)
     }).toList
-    queryFutures.iterator.flatMap(_.get)
+    queryFutures.iterator.flatMap(f => {
+      try {
+        f.get
+      } catch {
+        case e: com.datastax.driver.core.exceptions.ServerError => Iterator[(L,R)]()
+        case e: java.util.concurrent.ExecutionException => {
+          if(e.getCause.isInstanceOf[com.datastax.driver.core.exceptions.ServerError]) {
+            Iterator[(L,R)]()
+          } else {
+            throw e
+          }
+        }
+        case e:com.datastax.driver.core.exceptions.InvalidTypeException => Iterator[(L,R)]()
+        case e: Throwable => throw e
+      }
+    })
   }
 
   /**
