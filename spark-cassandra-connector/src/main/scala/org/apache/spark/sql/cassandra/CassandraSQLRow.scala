@@ -1,19 +1,17 @@
 package org.apache.spark.sql.cassandra
 
+import java.math.BigInteger
 import java.net.InetAddress
 import java.sql.Timestamp
 import java.util.{Date, UUID}
-import java.math.BigInteger
 
 import com.datastax.driver.core.Row
-import com.datastax.spark.connector.{CassandraRow, CassandraRowMetadata, GettableData, TupleValue, UDTValue}
 import com.datastax.spark.connector.rdd.reader.{RowReader, ThisRowReaderAsFactory}
-import com.datastax.spark.connector.types.TypeConverter
-
+import com.datastax.spark.connector.types.{ColumnType, TypeConverter}
+import com.datastax.spark.connector.{CassandraRow, CassandraRowMetadata, GettableData, TupleValue, UDTValue}
+import org.apache.spark.sql.types.Decimal
 import org.apache.spark.sql.{Row => SparkRow}
 import org.apache.spark.unsafe.types.UTF8String
-import org.apache.spark.sql.types.Decimal
-import org.joda.time.DateTimeZone.UTC
 
 final class CassandraSQLRow(val metaData: CassandraRowMetadata, val columnValues: IndexedSeq[AnyRef])
   extends GettableData with SparkRow with Serializable {
@@ -63,11 +61,21 @@ object CassandraSQLRow {
     override def targetClass = classOf[CassandraSQLRow]
   }
 
-  private def toSparkSqlType(value: Any): AnyRef = {
-    value match {
+  private lazy val customCatalystDataTypeConverter: PartialFunction[Any, AnyRef] = {
+    ColumnType.customDriverConverter
+      .flatMap(clazz => Some(clazz.catalystDataTypeConverter))
+      .getOrElse(PartialFunction.empty)
+  }
+
+  def toSparkSqlType(value: Any): AnyRef = {
+    val sparkSqlType: PartialFunction[Any, AnyRef] = customCatalystDataTypeConverter orElse {
       case date: Date => new Timestamp(date.getTime)
       case localDate: org.joda.time.LocalDate =>
         new java.sql.Date(localDate.toDateTimeAtStartOfDay().getMillis)
+      case localDate: java.time.LocalDate => java.sql.Date.valueOf(localDate)
+      case localTime: java.time.LocalTime => localTime.toNanoOfDay.asInstanceOf[AnyRef]
+      case duration: java.time.Duration => duration.toMillis.asInstanceOf[AnyRef]
+      case instant: java.time.Instant => new java.sql.Timestamp(instant.toEpochMilli)
       case str: String => UTF8String.fromString(str)
       case bigInteger: BigInteger => Decimal(bigInteger.toString)
       case inetAddress: InetAddress => UTF8String.fromString(inetAddress.getHostAddress)
@@ -79,6 +87,9 @@ object CassandraSQLRow {
       case tupleValue: TupleValue => TupleValue(tupleValue.values.map(toSparkSqlType): _*)
       case _ => value.asInstanceOf[AnyRef]
     }
+    sparkSqlType(value)
   }
+
+  val empty = new CassandraSQLRow(null, IndexedSeq.empty)
 }
 

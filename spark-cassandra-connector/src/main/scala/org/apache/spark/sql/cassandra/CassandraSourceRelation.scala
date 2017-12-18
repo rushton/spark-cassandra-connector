@@ -3,6 +3,16 @@ package org.apache.spark.sql.cassandra
 import java.net.InetAddress
 import java.util.UUID
 
+import com.datastax.spark.connector.cql.{CassandraConnector, CassandraConnectorConf, Schema}
+import com.datastax.spark.connector.rdd.partitioner.DataSizeEstimates
+import com.datastax.spark.connector.rdd.{CassandraRDD, CassandraTableScanRDD, ReadConf}
+import com.datastax.spark.connector.rdd.partitioner.dht.TokenFactory.forSystemLocalPartitioner
+import com.datastax.spark.connector.types.{InetType, UUIDType, VarIntType}
+import com.datastax.spark.connector.util.Quote._
+import com.datastax.spark.connector.util.{ConfigParameter, Logging, ReflectionUtil}
+import com.datastax.spark.connector.writer.{SqlRowWriter, WriteConf}
+import com.datastax.spark.connector.{SomeColumns, _}
+import org.apache.spark.SparkConf
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.cassandra.CassandraSQLRow.CassandraSQLRowReader
 import org.apache.spark.sql.cassandra.DataTypeConverter._
@@ -10,17 +20,6 @@ import org.apache.spark.sql.sources._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.{DataFrame, Row, SQLContext, sources}
 import org.apache.spark.unsafe.types.UTF8String
-import org.apache.spark.SparkConf
-
-import com.datastax.spark.connector.cql.{CassandraConnector, CassandraConnectorConf, Schema}
-import com.datastax.spark.connector.rdd.partitioner.CassandraPartitionGenerator._
-import com.datastax.spark.connector.rdd.partitioner.DataSizeEstimates
-import com.datastax.spark.connector.rdd.{CassandraRDD, ReadConf}
-import com.datastax.spark.connector.types.{InetType, UUIDType, VarIntType}
-import com.datastax.spark.connector.util.Quote._
-import com.datastax.spark.connector.util.{ConfigParameter, Logging, ReflectionUtil}
-import com.datastax.spark.connector.writer.{SqlRowWriter, WriteConf}
-import com.datastax.spark.connector.{SomeColumns, _}
 
 /**
  * Implements [[BaseRelation]]]], [[InsertableRelation]]]] and [[PrunedFilteredScan]]]]
@@ -32,10 +31,12 @@ private[cassandra] class CassandraSourceRelation(
     tableRef: TableRef,
     userSpecifiedSchema: Option[StructType],
     filterPushdown: Boolean,
+    confirmTruncate: Boolean,
     tableSizeInBytes: Option[Long],
     connector: CassandraConnector,
     readConf: ReadConf,
     writeConf: WriteConf,
+    sparkConf: SparkConf,
     override val sqlContext: SQLContext)
   extends BaseRelation
   with InsertableRelation
@@ -53,11 +54,21 @@ private[cassandra] class CassandraSourceRelation(
 
   override def insert(data: DataFrame, overwrite: Boolean): Unit = {
     if (overwrite) {
-      connector.withSessionDo {
-        val keyspace = quote(tableRef.keyspace)
-        val table = quote(tableRef.table)
-        session => session.execute(s"TRUNCATE $keyspace.$table")
+      if (confirmTruncate) {
+        connector.withSessionDo {
+          val keyspace = quote(tableRef.keyspace)
+          val table = quote(tableRef.table)
+          session => session.execute(s"TRUNCATE $keyspace.$table")
+        }
+      } else {
+        throw new UnsupportedOperationException(
+          """You are attempting to use overwrite mode which will truncate
+          |this table prior to inserting data. If you would merely like
+          |to change data already in the table use the "Append" mode.
+          |To actually truncate please pass in true value to the option
+          |"confirm.truncate" when saving. """.stripMargin)
       }
+
     }
 
     implicit val rwf = SqlRowWriter.Factory
@@ -106,15 +117,17 @@ private[cassandra] class CassandraSourceRelation(
   private def predicatePushDown(filters: Array[Filter]) = {
     logInfo(s"Input Predicates: [${filters.mkString(", ")}]")
 
+    val pv = connector.withClusterDo(_.getConfiguration.getProtocolOptions.getProtocolVersion)
+
     /** Apply built in rules **/
-    val bcpp = new BasicCassandraPredicatePushDown(filters.toSet, tableDef)
+    val bcpp = new BasicCassandraPredicatePushDown(filters.toSet, tableDef, pv)
     val basicPushdown = AnalyzedPredicates(bcpp.predicatesToPushDown, bcpp.predicatesToPreserve)
     logDebug(s"Basic Rules Applied:\n$basicPushdown")
 
     /** Apply any user defined rules **/
     val finalPushdown =  additionalRules.foldRight(basicPushdown)(
       (rules, pushdowns) => {
-        val pd = rules(pushdowns, tableDef)
+        val pd = rules(pushdowns, tableDef, sparkConf)
         logDebug(s"Applied ${rules.getClass.getSimpleName} Pushdown Filters:\n$pd")
         pd
       }
@@ -125,29 +138,34 @@ private[cassandra] class CassandraSourceRelation(
   }
 
   override def buildScan(requiredColumns: Array[String], filters: Array[Filter]): RDD[Row] = {
-    val prunedRdd = maybeSelect(baseRdd, requiredColumns)
-    val prunedFilteredRdd = {
+    val filteredRdd = {
       if(filterPushdown) {
         val pushdownFilters = predicatePushDown(filters).handledByCassandra.toArray
-        val filteredRdd = maybePushdownFilters(prunedRdd, pushdownFilters)
-        filteredRdd.asInstanceOf[RDD[Row]]
+        maybePushdownFilters(baseRdd, pushdownFilters)
       } else {
-        prunedRdd
+        baseRdd
       }
     }
-    prunedFilteredRdd.asInstanceOf[RDD[Row]]
+    maybeSelect(filteredRdd, requiredColumns)
   }
 
   /** Define a type for CassandraRDD[CassandraSQLRow]. It's used by following methods */
   private type RDDType = CassandraRDD[CassandraSQLRow]
 
   /** Transfer selection to limit to columns specified */
-  private def maybeSelect(rdd: RDDType, requiredColumns: Array[String]) : RDDType = {
-    if (requiredColumns.nonEmpty) {
+  private def maybeSelect(rdd: RDDType, requiredColumns: Array[String]) : RDD[Row] = {
+    val prunedRdd = if (requiredColumns.nonEmpty) {
       rdd.select(requiredColumns.map(column => column: ColumnRef): _*)
     } else {
-      rdd
+      rdd match {
+        case rdd: CassandraTableScanRDD[_] =>
+          CassandraTableScanRDD.countRDD(rdd)
+            .mapPartitions(_.flatMap(count => Iterator.fill(count.toInt)(CassandraSQLRow.empty)))
+        case _ => rdd
+      }
+
     }
+    prunedRdd.asInstanceOf[RDD[Row]]
   }
 
   /** Push down filters to CQL query */
@@ -215,7 +233,7 @@ object CassandraSourceRelation {
     default = None,
     description =
       """Used by DataFrames Internally, will be updated in a future release to
-        |retrieve size from C*. Can be set manually now""".stripMargin
+        |retrieve size from Cassandra. Can be set manually now""".stripMargin
   )
 
   val AdditionalCassandraPushDownRulesParam = ConfigParameter[List[CassandraPredicateRules]] (
@@ -223,8 +241,8 @@ object CassandraSourceRelation {
     section = ReferenceSection,
     default = List.empty,
     description =
-      """A comma seperated list of classes to be used (in order) to apply additional
-        | pushdown rules for C* Dataframes. Classes must implement CassandraPredicateRules
+      """A comma separated list of classes to be used (in order) to apply additional
+        | pushdown rules for Cassandra Dataframes. Classes must implement CassandraPredicateRules
       """.stripMargin
   )
 
@@ -251,7 +269,7 @@ object CassandraSourceRelation {
     val tableSizeInBytes = tableSizeInBytesString match {
       case Some(size) => Option(size.toLong)
       case None =>
-        val tokenFactory = getTokenFactory(cassandraConnector)
+        val tokenFactory = forSystemLocalPartitioner(cassandraConnector)
         val dataSizeInBytes =
           new DataSizeEstimates(
             cassandraConnector,
@@ -270,10 +288,12 @@ object CassandraSourceRelation {
       tableRef = tableRef,
       userSpecifiedSchema = schema,
       filterPushdown = options.pushdown,
+      confirmTruncate = options.confirmTruncate,
       tableSizeInBytes = tableSizeInBytes,
       connector = cassandraConnector,
       readConf = readConf,
       writeConf = writeConf,
+      sparkConf = conf,
       sqlContext = sqlContext)
   }
 
@@ -288,6 +308,7 @@ object CassandraSourceRelation {
     sqlConf: Map[String, String],
     tableRef: TableRef,
     tableConf: Map[String, String]) : SparkConf = {
+
     //Default settings
     val conf = sparkConf.clone()
     val cluster = tableRef.cluster.getOrElse(defaultClusterName)
@@ -301,6 +322,8 @@ object CassandraSourceRelation {
         sqlConf.get(s"default/$prop")).flatten.headOption
       value.foreach(conf.set(prop, _))
     }
+    //Set all user properties
+    conf.setAll(tableConf -- DefaultSource.confProperties)
     conf
   }
 }

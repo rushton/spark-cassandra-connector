@@ -29,19 +29,19 @@ object Versions {
   lazy val scalaBinary = scalaVersion.dropRight(2)
 
   val Akka            = "2.3.4"
-  val Cassandra       = "3.0.2"
-  val CassandraDriver = "3.0.2"
+  val Cassandra       = "3.6"
+  val CassandraDriver = "3.1.4"
   val CommonsIO       = "2.4"
   val CommonsLang3    = "3.3.2"
-  val CommonsBeanUtils= "1.8.0"
+  val CommonsBeanUtils= "1.9.3"
   val Config          = "1.2.1"
   val Guava           = "16.0.1"
   val JDK             = "1.7"
   val JodaC           = "1.2"
   val JodaT           = "2.3"
   val JOpt            = "3.2"
-  val Kafka           = "0.8.2.2"
   val Lzf             = "0.8.4"
+  val Netty           = "4.0.33.Final"
   val CodaHaleMetrics = "3.0.2"
   val ScalaCheck      = "1.12.5"
   val ScalaMock       = "3.2"
@@ -57,7 +57,7 @@ object Versions {
   // and install in a local Maven repository. This is all done automatically, however it will work
   // only on Unix/OSX operating system. Windows users have to build and install Spark manually if the
   // desired version is not yet published into a public Maven repository.
-  val Spark           = "2.0.0-preview"
+  val Spark           = "2.0.2"
   val SparkJetty      = "8.1.14.v20131031"
   val JSR166e         = "1.1.0"
   val Airlift         = "0.6"
@@ -71,6 +71,6 @@ object Versions {
         |  Scala: $versionInReapply ${hint(binaryInReapply)}
         |  Scala Binary: $binaryInReapply
         |  Java: target=$JDK user=${Properties.javaVersion}
-        |  Cassandra version for testing: ${Settings.cassandraTestVersion} [can be overridden by specifying '-Dtest.cassandra.version=<version>']
+        |  Cassandra version for testing: ${Testing.cassandraTestVersion} [can be overridden by specifying '-Dtest.cassandra.version=<version>']
         """.stripMargin)
 }

@@ -3,16 +3,19 @@ package com.datastax.spark.connector.rdd
 import java.io.IOException
 import java.util.Date
 
+import com.datastax.driver.core.HostDistance
+import com.datastax.driver.core.ProtocolVersion._
+import com.datastax.spark.connector._
+import com.datastax.spark.connector.cql.{CassandraConnector, CassandraConnectorConf}
+import com.datastax.spark.connector.embedded.YamlTransformations
+import com.datastax.spark.connector.mapper.{DefaultColumnMapper, JavaBeanColumnMapper, JavaTestBean, JavaTestUDTBean}
+import com.datastax.spark.connector.rdd.partitioner.dht.TokenFactory
+import com.datastax.spark.connector.types.{CassandraOption, TypeConverter}
+import org.joda.time.{DateTime, LocalDate}
+
 import scala.collection.JavaConversions._
 import scala.concurrent.Future
 import scala.reflect.runtime.universe.typeTag
-
-import org.joda.time.{DateTime, DateTimeZone, LocalDate}
-
-import com.datastax.spark.connector._
-import com.datastax.spark.connector.cql.CassandraConnector
-import com.datastax.spark.connector.mapper.DefaultColumnMapper
-import com.datastax.spark.connector.types.{CassandraOption, TypeConverter}
 
 case class KeyValue(key: Int, group: Long, value: String)
 case class KeyValueWithConversion(key: String, group: Int, value: Long)
@@ -53,11 +56,10 @@ case class TypeWithTupleSetter(id: Int) {
 }
 
 class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
-
-  useCassandraConfig(Seq("cassandra-default.yaml.template"))
+  useCassandraConfig(Seq(YamlTransformations.Default))
   useSparkConf(defaultConf)
 
-  val conn = CassandraConnector(defaultConf)
+  override val conn = CassandraConnector(defaultConf)
   val bigTableRowCount = 100000
 
   conn.withSessionDo { session =>
@@ -65,8 +67,8 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
 
     awaitAll(
       Future {
-        if (versionGreaterThanOrEquals(2,2)) {
-          println(s"Found version $cassandraMajorVersion  $cassandraMinorVersion")
+        skipIfProtocolVersionLT(V4) {
+          markup(s"Making PV4 Types")
           session.execute( s"""CREATE TABLE $ks.short_value (key INT, value SMALLINT, PRIMARY KEY (key))""")
           session.execute( s"""INSERT INTO $ks.short_value (key, value) VALUES (1,100)""")
           session.execute( s"""INSERT INTO $ks.short_value (key, value) VALUES (2,200)""")
@@ -122,10 +124,121 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
       },
 
       Future {
+        session.execute( s"""CREATE TYPE $ks.nested (field int, cassandra_another_field int, cassandra_yet_another_field int)""")
+        session.execute( s"""CREATE TABLE $ks.udts_nested(cassandra_property_1 INT PRIMARY KEY, cassandra_camel_case_property text, nested frozen<nested>)""")
+      },
+
+      Future {
         session.execute( s"""CREATE TABLE $ks.tuples(key INT PRIMARY KEY, value FROZEN<TUPLE<INT, VARCHAR>>)""")
         session.execute( s"""INSERT INTO $ks.tuples(key, value) VALUES (1, (1, 'first'))""")
       },
 
+      Future {
+        session.execute(s"""CREATE TABLE $ks.delete_short_rows_partition(key INT, group INT, value VARCHAR, PRIMARY KEY (key,group))""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows_partition(key, group, value) VALUES (10, 10, '1010')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows_partition(key, group, value) VALUES (10, 11, '1011')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows_partition(key, group, value) VALUES (10, 12, '1012')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows_partition(key, group, value) VALUES (20, 20, '2020')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows_partition(key, group, value) VALUES (20, 21, '2021')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows_partition(key, group, value) VALUES (20, 22, '2022')""")
+      },
+
+      Future {
+        session.execute(s"""CREATE TABLE $ks.delete_short_rows(key INT, group INT, value VARCHAR, PRIMARY KEY (key,group))""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows(key, group, value) VALUES (10, 10, '1010')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows(key, group, value) VALUES (10, 11, '1011')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows(key, group, value) VALUES (10, 12, '1012')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows(key, group, value) VALUES (20, 20, '2020')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows(key, group, value) VALUES (20, 21, '2021')""")
+        session.execute(s"""INSERT INTO $ks.delete_short_rows(key, group, value) VALUES (20, 22, '2022')""")
+      },
+
+      Future {
+        session.execute(s"""CREATE TABLE $ks.delete_wide_rows4(key INT, group TEXT, group2 INT, value VARCHAR, PRIMARY KEY ((key, group), group2))""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows4(key, group, group2, value) VALUES (10, '1', 1, '1010')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows4(key, group, group2, value) VALUES (10, '1', 2, '1011')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows4(key, group, group2, value) VALUES (10, '2', 1, '1012')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows4(key, group, group2, value) VALUES (1, '2', 2, '2020')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows4(key, group, group2, value) VALUES (2, '2', 1, '2021')""")
+      },
+
+      Future {
+        session.execute(s"""CREATE TABLE $ks.delete_wide_rows3(key INT, group INT, value VARCHAR, PRIMARY KEY (key, group))""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows3(key, group, value) VALUES (10, 10, '1010')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows3(key, group, value) VALUES (10, 11, '1011')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows3(key, group, value) VALUES (10, 12, '1012')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows3(key, group, value) VALUES (1, 20, '2020')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows3(key, group, value) VALUES (2, 21, '2021')""")
+      },
+
+      Future {
+        session.execute(s"""CREATE TABLE $ks.delete_wide_rows2(key INT, group INT, value VARCHAR, PRIMARY KEY (key, group))""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows2(key, group, value) VALUES (10, 10, '1010')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows2(key, group, value) VALUES (10, 11, '1011')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows2(key, group, value) VALUES (10, 12, '1012')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows2(key, group, value) VALUES (20, 20, '2020')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows2(key, group, value) VALUES (20, 21, '2021')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows2(key, group, value) VALUES (20, 22, '2022')""")
+      },
+
+      Future {
+        session.execute(s"""CREATE TABLE $ks.delete_wide_rows1(key INT, group INT, value VARCHAR, PRIMARY KEY (key, group))""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows1(key, group, value) VALUES (10, 10, '1010')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows1(key, group, value) VALUES (10, 11, '1011')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows1(key, group, value) VALUES (10, 12, '1012')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows1(key, group, value) VALUES (20, 20, '2020')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows1(key, group, value) VALUES (20, 21, '2021')""")
+        session.execute(s"""INSERT INTO $ks.delete_wide_rows1(key, group, value) VALUES (20, 22, '2022')""")
+       },
+
+      Future {
+        session.execute(
+          s"""CREATE TYPE $ks."Attachment" (
+            |  "Id" text,
+            |  "MimeType" text,
+            |  "FileName" text
+            |)
+          """.stripMargin)
+        session.execute(
+          s"""CREATE TABLE $ks."Interaction" (
+            |  "Id" text PRIMARY KEY,
+            |  "Attachments" map<text,frozen<"Attachment">>,
+            |  "ContactId" text
+            |)
+          """.stripMargin)
+        session.execute(
+          s"""INSERT INTO $ks."Interaction"(
+            |  "Id",
+            |  "Attachments",
+            |  "ContactId"
+            |)
+            |VALUES (
+            |  '000000a5ixIEvmPD',
+            |  null,
+            |  'xcb9HMoQ'
+            |)
+          """.stripMargin)
+        session.execute(
+          s"""UPDATE $ks."Interaction"
+            |SET
+            |  "Attachments" = "Attachments" + {'rVpgK':
+            |  {"Id":'rVpgK',
+            |  "MimeType":'text/plain',
+            |  "FileName":'notes.txt'}}
+            |WHERE "Id" = '000000a5ixIEvmPD'
+          """.stripMargin)
+      },
+
+      Future {
+        val tableName = "caseclasstuplegrouped"
+        session.execute(s"""CREATE TABLE IF NOT EXISTS $ks.$tableName (key INT, group INT, value VARCHAR, PRIMARY KEY (key, group))""")
+        session.execute(s"""INSERT INTO $ks.$tableName (key, group, value) VALUES (10, 10, '1010')""")
+        session.execute(s"""INSERT INTO $ks.$tableName (key, group, value) VALUES (10, 11, '1011')""")
+        session.execute(s"""INSERT INTO $ks.$tableName (key, group, value) VALUES (10, 12, '1012')""")
+        session.execute(s"""INSERT INTO $ks.$tableName (key, group, value) VALUES (20, 20, '2020')""")
+        session.execute(s"""INSERT INTO $ks.$tableName (key, group, value) VALUES (20, 21, '2021')""")
+        session.execute(s"""INSERT INTO $ks.$tableName (key, group, value) VALUES (20, 22, '2022')""")
+      },
       Future {
         createKeyspace(session, s""""MixedSpace"""")
         session.execute(s"""CREATE TABLE "MixedSpace"."MixedCase"(key INT PRIMARY KEY, value INT)""")
@@ -134,7 +247,7 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
         session.execute(s"""CREATE TABLE "MixedSpace"."MoxedCAs" (key INT PRIMARY KEY, value INT)""")
       },
       Future {
-        if (versionGreaterThanOrEquals(2, 2)) {
+        skipIfProtocolVersionLT(V4) {
           session.execute(
             s"""
                |CREATE TABLE $ks.user(
@@ -187,8 +300,10 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
       },
 
       Future {
-        session.execute(s"CREATE TABLE $ks.date_test (key int primary key, dd date)")
-        session.execute(s"INSERT INTO $ks.date_test (key, dd) VALUES (1, '1930-05-31')")
+        skipIfProtocolVersionLT(V4) {
+          session.execute(s"CREATE TABLE $ks.date_test (key int primary key, dd date)")
+          session.execute(s"INSERT INTO $ks.date_test (key, dd) VALUES (1, '1930-05-31')")
+        }
       }
     )
   }
@@ -251,6 +366,12 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
   it should "allow to read a Cassandra table as Array of user-defined class (with no fields) objects" in {
     val result = sc.cassandraTable[SampleScalaClassWithNoFields](ks, "simple_kv").collect()
     result should have length 3
+  }
+
+  it should "not overflow on reasonable but large split_size_in_mb" in {
+    sc.cassandraTable(ks, "simple_kv")
+      .withReadConf(ReadConf(splitSizeInMB = 10000))
+      .splitSize should be (10485760000L)
   }
 
   it should "allow to read a Cassandra table as Array of user-defined case class (nested) objects" in {
@@ -355,11 +476,6 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
     result.head.size shouldEqual 3
     result.head.getInt("group") shouldEqual 100
     result.head.getString("value") should startWith("000")
-  }
-
-  it should "use a single partition per node for a tiny table" in {
-    val rdd = sc.cassandraTable(ks, "key_value")
-    rdd.partitions should have length conn.hosts.size
   }
 
   it should "support single partition where clauses" in {
@@ -511,6 +627,52 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
     udtValue.getInt("zip") should be(11120)
   }
 
+  it should "allow to save UDT columns from mapped Java objects and read them as UDTValue or Java objects" in {
+    val judt = new JavaTestUDTBean
+    val jb = new JavaTestBean
+
+    // maps to field
+    judt.setField(3)
+    // maps to another_field
+    judt.setAnotherField(4)
+    // maps to yet_another_field
+    judt.setCompletelyUnrelatedField(5)
+
+    // maps to property_1
+    jb.setProperty1(1)
+    // maps to camel_case_property
+    jb.setCamelCaseProperty(2)
+    // maps to nested
+    jb.setNested(judt)
+
+    // We need to bridge the Object mapper in Java to Scala with the JavaBeanColumnMapper
+    implicit val columnMapper = new JavaBeanColumnMapper[JavaTestBean]()
+    sc.parallelize(Seq(jb)).saveToCassandra(ks,"udts_nested")
+
+    // Saving is done via POJO with annotations, now to read them back in
+    val result = sc.cassandraTable(ks, "udts_nested").select("cassandra_property_1", "cassandra_camel_case_property", "nested").collect()
+    result should have length 1
+    val row = result.head
+    row.getInt(0) should be(1)
+    row.getInt(1) should be(2)
+
+    val udtValue = row.getUDTValue(2)
+    udtValue.size should be(3)
+    udtValue.getInt("field") should be(3)
+    udtValue.getInt("cassandra_another_field") should be(4)
+    udtValue.getInt("cassandra_yet_another_field") should be(5)
+
+    // Let's do one more test, this time reading it back as the POJO
+    val bean = sc.cassandraTable[JavaTestBean](ks, "udts_nested").select("cassandra_property_1", "cassandra_camel_case_property", "nested").first()
+
+    bean.getProperty1 should be(1)
+    bean.getCamelCaseProperty should be(2)
+    bean.getNested.getField should be(3)
+    bean.getNested.getAnotherField should be(4)
+    bean.getNested.getCompletelyUnrelatedField should be(5)
+
+  }
+
   it should "allow to fetch UDT columns as objects of case classes" in {
     val result = sc.cassandraTable[ClassWithUDT](ks, "udts").select("key", "name", "addr").collect()
     result should have length 1
@@ -628,21 +790,16 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
     results should contain ((KeyGroup(2, 100), (2, 100, "0002")))
     results should contain ((KeyGroup(3, 300), (3, 300, "0003")))
   }
+  it should "allow the use of PER PARTITION LIMITs " in skipIfProtocolVersionLT(V4){
+    val result = sc.cassandraTable(ks, "clustering_time").perPartitionLimit(1).collect
+    result.size should be (1)
+  }
 
   it should "allow to read Cassandra table as Array of KV tuples of a case class and a tuple grouped by partition key" in {
 
-    conn.withSessionDo { session =>
-      session.execute(s"""CREATE TABLE IF NOT EXISTS $ks.wide_rows(key INT, group INT, value VARCHAR, PRIMARY KEY (key, group))""")
-      session.execute(s"""INSERT INTO $ks.wide_rows(key, group, value) VALUES (10, 10, '1010')""")
-      session.execute(s"""INSERT INTO $ks.wide_rows(key, group, value) VALUES (10, 11, '1011')""")
-      session.execute(s"""INSERT INTO $ks.wide_rows(key, group, value) VALUES (10, 12, '1012')""")
-      session.execute(s"""INSERT INTO $ks.wide_rows(key, group, value) VALUES (20, 20, '2020')""")
-      session.execute(s"""INSERT INTO $ks.wide_rows(key, group, value) VALUES (20, 21, '2021')""")
-      session.execute(s"""INSERT INTO $ks.wide_rows(key, group, value) VALUES (20, 22, '2022')""")
-    }
-
+    val tableName = "caseclasstuplegrouped"
     val results = sc
-      .cassandraTable[(Int, Int, String)](ks, "wide_rows")
+      .cassandraTable[(Int, Int, String)](ks, tableName)
       .select("key", "group", "value")
       .keyBy[Key]
       .spanByKey
@@ -891,7 +1048,7 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
     result should have length 0
   }
 
-  it should "suggest similar tables or views if the table doesn't exist" in {
+  it should "suggest similar tables or views if the table doesn't exist" in skipIfProtocolVersionLT(V4){
     val ioe = the [IOException] thrownBy sc.cassandraTable(ks, "user_by_county").collect()
     val message = ioe.getMessage
     message should include (s"$ks.user_by_country")
@@ -926,56 +1083,20 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
   }
 
   it should "handle upper case characters in UDT fields" in {
-    conn.withSessionDo { session =>
-      session.execute(
-        s"""CREATE TYPE $ks."Attachment" (
-          |  "Id" text,
-          |  "MimeType" text,
-          |  "FileName" text
-          |)
-        """.stripMargin)
-      session.execute(
-        s"""CREATE TABLE $ks."Interaction" (
-          |  "Id" text PRIMARY KEY,
-          |  "Attachments" map<text,frozen<"Attachment">>,
-          |  "ContactId" text
-          |)
-        """.stripMargin)
-      session.execute(
-        s"""INSERT INTO $ks."Interaction"(
-          |  "Id",
-          |  "Attachments",
-          |  "ContactId"
-          |)
-          |VALUES (
-          |  '000000a5ixIEvmPD',
-          |  null,
-          |  'xcb9HMoQ'
-          |)
-        """.stripMargin)
-      session.execute(
-        s"""UPDATE $ks."Interaction"
-          |SET
-          |  "Attachments" = "Attachments" + {'rVpgK':
-          |  {"Id":'rVpgK',
-          |  "MimeType":'text/plain',
-          |  "FileName":'notes.txt'}}
-          |WHERE "Id" = '000000a5ixIEvmPD'
-        """.stripMargin)
-    }
+
     val tableRdd = sc.cassandraTable(ks, "Interaction")
     val dataColumns = tableRdd.map(row => row.getString("ContactId"))
     dataColumns.count shouldBe 1
   }
 
-  it should "be able to read SMALLINT columns from" in {
+  it should "be able to read SMALLINT columns from" in skipIfProtocolVersionLT(V4) {
     val result = sc.cassandraTable[(Int, Short)](ks, "short_value").collect
     result should contain ((1, 100))
     result should contain ((2, 200))
     result should contain ((3, 300))
   }
 
-  it should "be able to read a Materialized View" in  {
+  it should "be able to read a Materialized View" in skipIfProtocolVersionLT(V4){
     val result = sc.cassandraTable[(String, Int, String, String, String)](ks, "user_by_country")
       .where("country='US'")
       .collect
@@ -985,7 +1106,7 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
     )
   }
 
-  it should "throw an exception when trying to write to a Materialized View" in {
+  it should "throw an exception when trying to write to a Materialized View" in skipIfProtocolVersionLT(V4){
     intercept[IllegalArgumentException] {
       sc.parallelize(Seq(("US", 1, "John", "DOE", "jdoe"))).saveToCassandra(ks, "user_by_country")
     }
@@ -1038,7 +1159,7 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
     }
   }
 
-  it should "write Java dates as C* date type" in {
+  it should "write Java dates as C* date type" in skipIfProtocolVersionLT(V4){
     val rows = List(
       (6, new java.sql.Date(new Date().getTime)),
       (7, new Date()),
@@ -1054,7 +1175,7 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
     resultSet.one().getLong(0) should be(rows.size)
   }
 
-  it should "read C* row with dates as Java dates" in {
+  it should "read C* row with dates as Java dates" in skipIfProtocolVersionLT(V4){
     val expected: LocalDate = new LocalDate(1930, 5, 31) // note this is Joda
     val row = sc.cassandraTable(ks, "date_test").where("key = 1").first
 
@@ -1063,12 +1184,212 @@ class CassandraRDDSpec extends SparkCassandraITFlatSpecBase {
     row.get[LocalDate]("dd") should be(expected)
   }
 
-  it should "read LocalDate as tuple value with given type" in {
+  it should "read LocalDate as tuple value with given type" in skipIfProtocolVersionLT(V4){
     val expected: LocalDate = new LocalDate(1930, 5, 31) // note this is Joda
     val date = sc.cassandraTable[(Int, Date)](ks, "date_test").where("key = 1").first._2
     val localDate = sc.cassandraTable[(Int, LocalDate)](ks, "date_test").where("key = 1").first._2
 
     date should be(expected.toDateTimeAtStartOfDay.toDate)
     localDate should be(expected)
+  }
+
+  it should "adjust maxConnections based on the runtime config" in {
+    val expected = math.max(sc.defaultParallelism/ sc.getExecutorStorageStatus.length, 1)
+    markup(s"Expected = $expected, 1 is default")
+    val rdd = sc.cassandraTable(ks, "big_table")
+    val poolingOptions = rdd.connector.withClusterDo(_.getConfiguration.getPoolingOptions)
+    poolingOptions.getMaxConnectionsPerHost(HostDistance.LOCAL) should be (expected)
+    poolingOptions.getMaxConnectionsPerHost(HostDistance.REMOTE) should be (expected)
+  }
+
+  it should "allow forcing a larger maxConnection based on a runtime conf change" in {
+    val expected = 10
+    val conf = sc.getConf.set(CassandraConnectorConf.MaxConnectionsPerExecutorParam.name, "10")
+    val rdd = sc.cassandraTable(ks, "big_table").withConnector(CassandraConnector(conf))
+    val poolingOptions = rdd.connector.withClusterDo(_.getConfiguration.getPoolingOptions)
+    poolingOptions.getMaxConnectionsPerHost(HostDistance.LOCAL) should be (expected)
+    poolingOptions.getMaxConnectionsPerHost(HostDistance.REMOTE) should be (expected)
+  }
+
+
+  "RDD.coalesce"  should "not loose data" in {
+    val rdd = sc.cassandraTable(ks, "big_table").coalesce(4)
+    rdd.count should be (bigTableRowCount)
+  }
+
+  it should "set exact number of partitions" in {
+    val rdd = sc.cassandraTable(ks, "big_table").coalesce(8)
+    rdd.partitions.size should be (8 +-1 )
+  }
+
+  it should "set exact number of partitions (1)" in {
+    val rdd = sc.cassandraTable(ks, "big_table").coalesce(1)
+    rdd.partitions.size should be (1)
+  }
+
+  it should "work with 0" in {
+    val rdd = sc.cassandraTable(ks, "big_table").coalesce(0)
+    rdd.partitions.size should be (1)
+  }
+
+  "RDD.repartition"  should "not loose data" in {
+    val rdd = sc.cassandraTable(ks, "big_table").repartition(4)
+    rdd.count should be (bigTableRowCount)
+  }
+
+  it should "set exact number of partitions" in {
+    val rdd = sc.cassandraTable(ks, "big_table").repartition(4)
+    rdd.partitions.size should be (4)
+  }
+
+  "RDD.deleteFromCassandra" should "delete rows just selected from the C*" in {
+
+    sc.cassandraTable(ks, "delete_wide_rows1").where("key = 20")
+      .deleteFromCassandra(ks, "delete_wide_rows1")
+
+    val results = sc
+      .cassandraTable[(Int, Int, String)](ks, "delete_wide_rows1")
+      .select("key", "group", "value")
+      .collect()
+
+    results should have size 3
+
+    results should contain theSameElementsAs Seq(
+      (10, 10, "1010"),
+      (10, 11, "1011"),
+      (10, 12, "1012"))
+
+  }
+
+  it should "delete rows with specified mapping" in {
+
+    sc.cassandraTable[(Int, Int)](ks, "delete_wide_rows2")
+      .select("group", "key").where("key = 20")
+      .deleteFromCassandra(ks, "delete_wide_rows2", keyColumns = SomeColumns("group", "key"))
+
+    val results = sc
+      .cassandraTable[(Int, Int, String)](ks, "delete_wide_rows2")
+      .select("key", "group", "value")
+      .collect()
+
+    results should have size 3
+
+    results should contain theSameElementsAs Seq(
+      (10, 10, "1010"),
+      (10, 11, "1011"),
+      (10, 12, "1012"))
+
+  }
+
+  it should "delete rows with joins" in {
+
+    sc.cassandraTable(ks, "delete_wide_rows3").joinWithCassandraTable(ks, "key_value").map(_._1)
+      .deleteFromCassandra(ks, "delete_wide_rows3")
+
+    val results = sc
+      .cassandraTable[(Int, Int, String)](ks, "delete_wide_rows3")
+      .select("key", "group", "value")
+      .collect()
+
+    results should have size 3
+
+    results should contain inOrder(
+      (10, 10, "1010"),
+      (10, 11, "1011"),
+      (10, 12, "1012"))
+
+  }
+
+  it should "delete rows with composite key" in {
+
+    sc.parallelize(Seq((10, "1", 1), (10, "2", 1)))
+      .deleteFromCassandra(ks, "delete_wide_rows4")
+
+    val results = sc
+      .cassandraTable[(Int, String, Int, String)](ks, "delete_wide_rows4")
+      .select("key", "group", "group2", "value")
+      .collect()
+
+    results should have size 3
+  }
+
+  it should "delete just selected column from the C*" in {
+
+   sc.cassandraTable(ks, "delete_short_rows").where("key = 20")
+      .deleteFromCassandra(ks, "delete_short_rows", SomeColumns("value"))
+
+    val results = sc.cassandraTable[(Int, Int, Option[String])](ks, "delete_short_rows")
+      .collect()
+
+    results should have size 6
+
+    results should contain theSameElementsAs Seq(
+      (10, 10, Some("1010")),
+      (10, 11, Some("1011")),
+      (10, 12, Some("1012")),
+      (20, 20, None),
+      (20, 21, None),
+      (20, 22, None))
+  }
+
+  it should "delete base on partition key only" in {
+
+    sc.parallelize(Seq(Key(20)))
+      .deleteFromCassandra(ks, "delete_short_rows_partition", keyColumns = SomeColumns("key"))
+
+    val results = sc.cassandraTable[(Int, Int, Option[String])](ks, "delete_short_rows_partition")
+      .collect()
+
+    results should have size 3
+
+    results should contain theSameElementsAs Seq(
+      (10, 10, Some("1010")),
+      (10, 11, Some("1011")),
+      (10, 12, Some("1012")))
+
+  }
+
+  "DataSize Estimates" should "handle overflows in the size estimates for a table" in {
+    fudgeSizeEstimatesTable("key_value", Long.MaxValue)
+    val partitions = sc.cassandraTable(ks, "key_value").partitions
+    partitions.size should be <= (sc.defaultParallelism * 3)
+  }
+
+
+  /**
+    * Fudges the size estimates information for the given table
+    * Attempts to replace all records for existing ranges with a single record
+    * giving a mean size of sizeFudgeInMB
+    */
+  def fudgeSizeEstimatesTable(tableName: String, sizeFudgeInMB: Long) = {
+
+    val meta = conn.withClusterDo(_.getMetadata)
+    val tokenFactory = TokenFactory.forSystemLocalPartitioner(conn)
+
+    conn.withSessionDo { case session =>
+      session.execute(
+        """DELETE FROM system.size_estimates
+          |where keyspace_name = ?
+          |AND table_name = ?""".stripMargin, ks, tableName)
+
+      session.execute(
+        """
+          |INSERT INTO system.size_estimates (
+          |  keyspace_name,
+          |  table_name,
+          |  range_start,
+          |  range_end,
+          |  mean_partition_size,
+          |  partitions_count)
+          |  VALUES (?,?,?,?,?,?)
+        """.
+          stripMargin,
+        ks,
+        tableName,
+        tokenFactory.minToken.toString,
+        tokenFactory.maxToken.toString,
+        sizeFudgeInMB * 1024 * 1024: java.lang.Long,
+        1L: java.lang.Long)
+    }
   }
 }

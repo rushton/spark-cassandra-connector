@@ -2,15 +2,12 @@ package com.datastax.spark.connector.cql
 
 import com.datastax.spark.connector.SparkCassandraITFlatSpecBase
 import com.datastax.spark.connector.cql.CassandraConnectorConf.CassandraSSLConf
-import com.datastax.spark.connector.embedded.EmbeddedCassandra
+import com.datastax.spark.connector.embedded.{EmbeddedCassandra, YamlTransformations}
 
 class CassandraSSLConnectorSpec extends SparkCassandraITFlatSpecBase {
+  useCassandraConfig(Seq(YamlTransformations.ClientEncryption))
 
-  useCassandraConfig(Seq("cassandra-ssl.yaml.template"))
-
-  // TODO: Add a test so that CassandraConnector is configured for SSL through SparkConf
-
-  val conn = CassandraConnector(
+  override val conn = CassandraConnector(
     hosts = Set(EmbeddedCassandra.getHost(0)),
     port = EmbeddedCassandra.getPort(0),
     cassandraSSLConf = CassandraSSLConf(

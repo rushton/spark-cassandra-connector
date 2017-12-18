@@ -4,20 +4,23 @@ import java.io.IOException
 
 import scala.collection.JavaConversions._
 import scala.concurrent.Future
-
 import com.datastax.driver.core.ProtocolVersion
+import com.datastax.driver.core.ProtocolVersion._
 import com.datastax.spark.connector.{SomeColumns, _}
 import com.datastax.spark.connector.cql._
+import com.datastax.spark.connector.embedded.YamlTransformations
 import com.datastax.spark.connector.mapper.DefaultColumnMapper
 import com.datastax.spark.connector.types._
+import org.apache.spark.SparkException
 
+case class Address(street: String, city: String, zip: Int)
+case class KV(key: Int, value: String)
 case class KeyValue(key: Int, group: Long, value: String)
 case class KeyValueWithTransient(key: Int, group: Long, value: String, @transient transientField: String)
 case class KeyValueWithTTL(key: Int, group: Long, value: String, ttl: Int)
 case class KeyValueWithTimestamp(key: Int, group: Long, value: String, timestamp: Long)
 case class KeyValueWithConversion(key: String, group: Int, value: String)
 case class ClassWithWeirdProps(devil: String, cat: Int, value: String)
-case class Address(street: String, city: String, zip: Int)
 
 class SuperKeyValue(val key: Int, val value: String) extends Serializable
 
@@ -30,12 +33,10 @@ object CustomerIdConverter extends TypeConverter[String] {
 }
 
 class TableWriterSpec extends SparkCassandraITFlatSpecBase {
-
-
-  useCassandraConfig(Seq("cassandra-default.yaml.template"))
+  useCassandraConfig(Seq(YamlTransformations.Default))
   useSparkConf(defaultConf)
 
-  val conn = CassandraConnector(defaultConf)
+  override val conn = CassandraConnector(defaultConf)
 
   conn.withSessionDo { session =>
     createKeyspace(session)
@@ -72,11 +73,16 @@ class TableWriterSpec extends SparkCassandraITFlatSpecBase {
         session.execute( s"""CREATE TABLE $ks.map_tuple (a TEXT, b TEXT, c TEXT, PRIMARY KEY (a))""")
       },
       Future {
+        session.execute( s"""CREATE TABLE $ks.static_test (key INT, group BIGINT, value TEXT STATIC, PRIMARY KEY (key, group))""")
+      },
+      Future {
         session.execute( s"""CREATE TABLE $ks.unset_test (a TEXT, b TEXT, c TEXT, PRIMARY KEY (a))""")
       },
       Future {
         session.execute( s"""CREATE TYPE $ks.address (street text, city text, zip int)""")
         session.execute( s"""CREATE TABLE $ks.udts(key INT PRIMARY KEY, name text, addr frozen<address>)""")
+        session.execute( s"""CREATE TABLE $ks.udtcollection(key INT PRIMARY KEY, addrlist list<frozen<address>>, addrmap map<text, frozen<address>>)""")
+
       },
       Future {
         session.execute( s"""CREATE TABLE $ks.tuples (key INT PRIMARY KEY, value frozen<tuple<int, int, varchar>>)""")
@@ -124,6 +130,15 @@ class TableWriterSpec extends SparkCassandraITFlatSpecBase {
     val rows = Seq((1, 1L, "value1"), (2, 2L, "value2"), (3, 3L, "value3"))
     sc.parallelize(rows).saveAsCassandraTableEx(table, SomeColumns("key", "group", "value"))
     verifyKeyValueTable("new_kv_table")
+  }
+
+  it should "write an RDD of PV4 Tuples to PV3 without breaking" in skipIfProtocolVersionGTE(V4){
+    val rows = Seq((Byte.MinValue, Short.MinValue, java.sql.Date.valueOf("2016-08-03")))
+    sc.parallelize(rows).saveAsCassandraTable(ks, "pv3")
+
+    sc.cassandraTable[(Int, Int, String)](ks, "pv3").collect should contain
+      theSameElementsAs(Seq(Byte.MinValue.toInt, Short.MinValue.toInt, "2016-08-03 00:00:00.0"))
+
   }
 
   it should "write RDD of tuples applying proper data type conversions" in {
@@ -177,6 +192,34 @@ class TableWriterSpec extends SparkCassandraITFlatSpecBase {
     )
     sc.parallelize(col).saveToCassandra(ks, "key_value")
     verifyKeyValueTable("key_value")
+  }
+
+  it should "pass the exception back to the driver on a write failure" in {
+    val ioException = intercept[SparkException] {
+      sc.parallelize[(Int, Option[Long], String)](Seq((1, None, "Hello")))
+        .saveToCassandra(ks, "key_value")
+    }
+
+    ioException.getMessage should include ("Invalid null value")
+  }
+
+  it should "write to a table with only partition key and static columns without clustering" in {
+    sc.parallelize(1 to 10)
+      .map( x => KV(x, x.toString))
+      .saveToCassandra(ks, "static_test", SomeColumns("key", "value"))
+
+    sc.cassandraTable(ks, "static_test").count should be (10)
+  }
+
+  it should "throw an exception if writing to a table with only pk and non-static columns" in {
+    val ex  = intercept[IllegalArgumentException] {
+      sc.parallelize(1 to 10)
+        .map(x => KV(x, x.toString))
+        .saveToCassandra(ks, "key_value", SomeColumns("key", "value"))
+    }
+    val message = ex.getMessage
+    message should include ("primary key")
+    message should include ("group")
   }
 
   it should "ignore unset inserts" in {
@@ -388,6 +431,14 @@ class TableWriterSpec extends SparkCassandraITFlatSpecBase {
         row.getUDTValue(2).getInt("zip") shouldEqual 90210
       }
     }
+  }
+
+  it should "write values of user-defined-types in Cassandra Collections" in {
+    val address = Address(city = "New Orleans", zip = 20401, street = "Magazine")
+    val rows = Seq((1, Seq(address), Map("home" -> address)))
+    sc.parallelize(rows).saveToCassandra(ks, "udtcollection")
+    val result = sc.cassandraTable[(Int, Seq[Address], Map[String, Address])](ks, "udtcollection").collect
+    result should contain theSameElementsAs (rows)
   }
 
   it should "write values of user-defined-types in Cassandra" in {

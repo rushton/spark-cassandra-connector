@@ -2,7 +2,9 @@
 
 ## The `spark-cassandra-connector-embedded` Artifact
 
-The `spark-cassandra-connector-embedded` artifact can be used as a test or prototype dependency to spin up embedded servers for testing ideas, quickly learning, integration, etc.
+The `spark-cassandra-connector-embedded` artifact can be used as a test 
+or prototype dependency to spin up embedded servers for testing ideas, 
+quickly learning, integration, etc.
 
 Pulling this dependency in allows you to:
 
@@ -20,5 +22,8 @@ See: [https://github.com/datastax/spark-cassandra-connector/tree/master/spark-ca
 Simply add this to your SBT build, or in the appropriate format for a Maven build:
 
     "com.datastax.spark"  %% "spark-cassandra-connector-embedded" % {latest.version}
+    
+## Examples
+https://github.com/datastax/SparkBuildExamples
 
 [Next - Performance Monitoring](11_metrics.md)

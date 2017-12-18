@@ -21,7 +21,7 @@ import scala.reflect.runtime.universe._
 private[connector] class GettableDataToMappedTypeConverter[T : TypeTag : ColumnMapper](
     structDef: StructDef,
     columnSelection: IndexedSeq[ColumnRef])
-  extends TypeConverter[T] {
+  extends NullableTypeConverter[T] {
 
   // can't be lazy, because TypeTags are not serializable, and if we made it lazy,
   // the right side would be stored in a hidden serialized variable anyway
@@ -65,7 +65,7 @@ private[connector] class GettableDataToMappedTypeConverter[T : TypeTag : ColumnM
     val tpe = SparkReflectionLock.synchronized(typeTag[U].tpe)
     if (tpe.typeSymbol.fullName startsWith "scala.Tuple")
       new TupleColumnMapper[U]
-    else if (isJavaBean) 
+    else if (isJavaBean)
       new JavaBeanColumnMapper[U]()(ReflectionUtil.classTag[U])
     else
       new DefaultColumnMapper[U]
@@ -81,7 +81,7 @@ private[connector] class GettableDataToMappedTypeConverter[T : TypeTag : ColumnM
     E.g. for a list type, we recursively call this method to get the converter for the
     list items and then we call `TypeConverter.forType` to get a proper converter for lists.
     */
-    val tpe = typeTag[U].tpe
+    val tpe = SparkReflectionLock.synchronized(typeTag[U].tpe)
     (columnType, tpe) match {
       case (argColumnType, TypeRef(_, Symbols.OptionSymbol, List(argScalaType))) =>
         val argConverter = converter(argColumnType, argScalaType)

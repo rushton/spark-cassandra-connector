@@ -34,7 +34,7 @@ implicit
     partitionKeyMapper.selectFrom(tableDef)
   )
 
-  @transient lazy private val tokenGenerator = new TokenGenerator[T](connector, tableDef, rowWriter)
+  @transient lazy private[spark] val tokenGenerator = new TokenGenerator[T](connector, tableDef, rowWriter)
   @transient lazy private val metadata = connector.withClusterDo(_.getMetadata)
   @transient lazy private val protocolVersion = connector
     .withClusterDo(_.getConfiguration.getProtocolOptions.getProtocolVersion)
@@ -52,7 +52,9 @@ implicit
   private val indexMap = for ((ip, partitions) <- hostMap; partition <- partitions) yield (partition, ip)
   // 0->IP1, 1-> IP1, ...
 
-  private def randomHost(index: Int): InetAddress = hosts(index % hosts.length)
+  private def absModulo(dividend: Int, divisor: Int) : Int = Math.abs(dividend % divisor)
+
+  private def randomHost(index: Int): InetAddress = hosts(absModulo(index, hosts.length))
 
   /**
    * Given a set of endpoints, pick a random endpoint, and then a random partition owned by that
@@ -65,18 +67,18 @@ implicit
     key match {
       case key: T if clazz.isInstance(key) =>
         //Only use ReplicaEndpoints in the connected DC
-        val token = tokenGenerator.getTokenFor(key)
-        val tokenHash = Math.abs(token.hashCode())
+        val keyBuffer = tokenGenerator.getPartitionKeyBufferFor(key)
+        val keyHash = Math.abs(keyBuffer.hashCode())
         val replicas = metadata
-          .getReplicas(keyspace, token.serialize(protocolVersion))
+          .getReplicas(keyspace, keyBuffer)
           .map(_.getBroadcastAddress)
 
         val replicaSetInDC = (hostSet & replicas).toVector
         if (replicaSetInDC.nonEmpty) {
-          val endpoint = replicaSetInDC(tokenHash % replicaSetInDC.size)
-          hostMap(endpoint)(tokenHash % partitionsPerReplicaSet)
+          val endpoint = replicaSetInDC(absModulo(keyHash, replicaSetInDC.size))
+          hostMap(endpoint)(absModulo(keyHash, partitionsPerReplicaSet))
         } else {
-          hostMap(randomHost(tokenHash))(tokenHash % partitionsPerReplicaSet)
+          hostMap(randomHost(keyHash))(absModulo(keyHash, partitionsPerReplicaSet))
         }
       case _ => throw new IllegalArgumentException(
         "ReplicaPartitioner can only determine the partition of a tuple whose key is a non-empty Set[InetAddress]. " +

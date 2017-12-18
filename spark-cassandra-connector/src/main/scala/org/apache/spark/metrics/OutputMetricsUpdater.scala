@@ -7,6 +7,7 @@ import com.twitter.jsr166e.LongAdder
 import org.apache.spark.executor.{DataWriteMethod, OutputMetrics}
 import org.apache.spark.TaskContext
 
+import com.datastax.spark.connector.util.Logging
 import com.datastax.spark.connector.writer.{RichStatement, WriteConf}
 import com.datastax.spark.connector.util.Logging
 
@@ -129,6 +130,7 @@ object OutputMetricsUpdater extends Logging {
         val t = System.nanoTime()
         source.writeBatchTimer.update(t - executionTimestamp, TimeUnit.NANOSECONDS)
         source.writeBatchWaitTimer.update(executionTimestamp - submissionTimestamp, TimeUnit.NANOSECONDS)
+        source.writeBatchSizeHistogram.update(count)
         source.writeRowMeter.mark(count)
         source.writeByteMeter.mark(dataLength)
         source.writeSuccessCounter.inc()

@@ -1,18 +1,18 @@
 package com.datastax.spark.connector.cql
 
-import com.datastax.driver.core.ProtocolOptions
+import com.datastax.driver.core.{HostDistance, ProtocolOptions}
 import com.datastax.spark.connector.{SparkCassandraITFlatSpecBase, _}
 import com.datastax.spark.connector.embedded._
+import org.scalatest.BeforeAndAfterEach
 
 case class KeyValue(key: Int, group: Long, value: String)
 case class KeyValueWithConversion(key: String, group: Int, value: Long)
 
-class CassandraConnectorSpec extends SparkCassandraITFlatSpecBase {
-
-  useCassandraConfig(Seq("cassandra-default.yaml.template"))
+class CassandraConnectorSpec extends SparkCassandraITFlatSpecBase with BeforeAndAfterEach{
+  useCassandraConfig(Seq(YamlTransformations.Default))
   useSparkConf(defaultConf)
 
-  val conn = CassandraConnector(defaultConf)
+  override val conn = CassandraConnector(defaultConf)
 
   val createKeyspaceCql = keyspaceCql(ks)
 
@@ -28,6 +28,21 @@ class CassandraConnectorSpec extends SparkCassandraITFlatSpecBase {
       assert(cluster.getMetadata.getClusterName != null)
       assert(cluster.getMetadata.getAllHosts.size > 0)
     }
+  }
+
+  it should "have the default max hosts in pooling options" in {
+    val poolingConf = conn.withClusterDo(_.getConfiguration.getPoolingOptions)
+    poolingConf.getMaxConnectionsPerHost(HostDistance.LOCAL) should be (1)
+    poolingConf.getMaxConnectionsPerHost(HostDistance.REMOTE) should be (1)
+  }
+
+  it should "have larger max hosts if set" in {
+    val maxCon = CassandraConnector(
+      defaultConf.set(CassandraConnectorConf.MaxConnectionsPerExecutorParam.name, "5"))
+
+    val poolingConf = maxCon.withClusterDo(_.getConfiguration.getPoolingOptions)
+    poolingConf.getMaxConnectionsPerHost(HostDistance.LOCAL) should be (5)
+    poolingConf.getMaxConnectionsPerHost(HostDistance.REMOTE) should be (5)
   }
 
   it should "run queries" in {
@@ -102,17 +117,19 @@ class CassandraConnectorSpec extends SparkCassandraITFlatSpecBase {
   }
 
   it should "not make multiple clusters when writing multiple RDDs" in {
-    CassandraConnector(sc.getConf).withSessionDo{ session =>
+    CassandraConnector(sc.getConf).withSessionDo { session =>
       session.execute(createKeyspaceCql)
       session.execute(s"CREATE TABLE IF NOT EXISTS $ks.pair (x int, y int, PRIMARY KEY (x))")
     }
-    for (trial <- 1 to 3){
-      val rdd = sc.parallelize(1 to 100).map(x=> (x,x)).saveToCassandra(ks, "pair")
+    for (trial <- 1 to 3) {
+      val rdd = sc.parallelize(1 to 100).map(x => (x, x)).saveToCassandra(ks, "pair")
     }
+
     val sessionCache = CassandraConnector.sessionCache
-    sessionCache.contains(CassandraConnectorConf(sc.getConf)) should be (true)
-    sessionCache.cache.size should be (1)
+    sessionCache.contains(CassandraConnectorConf(sc.getConf)) should be(true)
+    sessionCache.cache.size should be(1)
   }
+    
 
   it should "be configurable from SparkConf" in {
     val conf = sc.getConf

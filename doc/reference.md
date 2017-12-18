@@ -26,6 +26,13 @@
   <td>Compression to use (LZ4, SNAPPY or NONE)</td>
 </tr>
 <tr>
+  <td><code>connection.connections_per_executor_max</code></td>
+  <td>None</td>
+  <td>Maximum number of connections per Host set on each Executor JVM. Will be
+updated to DefaultParallelism / Executors for Spark Commands. Defaults to 1
+ if not specifying and not in a Spark Env</td>
+</tr>
+<tr>
   <td><code>connection.factory</code></td>
   <td>DefaultConnectionFactory</td>
   <td>Name of a Scala module or class implementing
@@ -34,7 +41,7 @@ CassandraConnectionFactory providing connections to the Cassandra cluster</td>
 <tr>
   <td><code>connection.host</code></td>
   <td>localhost</td>
-  <td>Contact point to connect to the Cassandra cluster. A comma seperated list
+  <td>Contact point to connect to the Cassandra cluster. A comma separated list
 may also be used. ("127.0.0.1,192.168.0.1")
       </td>
 </tr>
@@ -74,12 +81,6 @@ may also be used. ("127.0.0.1,192.168.0.1")
   <td>Number of times to retry a timed-out query</td>
 </tr>
 <tr>
-  <td><code>query.retry.delay</code></td>
-  <td>4 * 1.5</td>
-  <td>The delay between subsequent retries (can be constant,
- like 1000; linearly increasing, like 1000+100; or exponential, like 1000*2)</td>
-</tr>
-<tr>
   <td><code>read.timeout_ms</code></td>
   <td>120000</td>
   <td>Maximum period of time to wait for a read to return </td>
@@ -95,15 +96,15 @@ may also be used. ("127.0.0.1,192.168.0.1")
 <tr>
   <td><code>sql.pushdown.additionalClasses</code></td>
   <td></td>
-  <td>A comma seperated list of classes to be used (in order) to apply additional
- pushdown rules for C* Dataframes. Classes must implement CassandraPredicateRules
+  <td>A comma separated list of classes to be used (in order) to apply additional
+ pushdown rules for Cassandra Dataframes. Classes must implement CassandraPredicateRules
       </td>
 </tr>
 <tr>
   <td><code>table.size.in.bytes</code></td>
   <td>None</td>
   <td>Used by DataFrames Internally, will be updated in a future release to
-retrieve size from C*. Can be set manually now</td>
+retrieve size from Cassandra. Can be set manually now</td>
 </tr>
 </table>
 
@@ -127,6 +128,11 @@ retrieve size from C*. Can be set manually now</td>
 <table class="table">
 <tr><th>Property Name</th><th>Default</th><th>Description</th></tr>
 <tr>
+  <td><code>connection.ssl.clientAuth.enabled</code></td>
+  <td>false</td>
+  <td>Enable 2-way secure connection to Cassandra cluster</td>
+</tr>
+<tr>
   <td><code>connection.ssl.enabled</code></td>
   <td>false</td>
   <td>Enable secure connection to Cassandra cluster</td>
@@ -135,6 +141,21 @@ retrieve size from C*. Can be set manually now</td>
   <td><code>connection.ssl.enabledAlgorithms</code></td>
   <td>Set(TLS_RSA_WITH_AES_128_CBC_SHA, TLS_RSA_WITH_AES_256_CBC_SHA)</td>
   <td>SSL cipher suites</td>
+</tr>
+<tr>
+  <td><code>connection.ssl.keyStore.password</code></td>
+  <td>None</td>
+  <td>Key store password</td>
+</tr>
+<tr>
+  <td><code>connection.ssl.keyStore.path</code></td>
+  <td>None</td>
+  <td>Path for the key store being used</td>
+</tr>
+<tr>
+  <td><code>connection.ssl.keyStore.type</code></td>
+  <td>JKS</td>
+  <td>Key store type</td>
 </tr>
 <tr>
   <td><code>connection.ssl.protocol</code></td>
@@ -168,7 +189,7 @@ retrieve size from C*. Can be set manually now</td>
   <td><code>dev.customFromDriver</code></td>
   <td>None</td>
   <td>Provides an additional class implementing CustomDriverConverter for those
-clients that need to read non-standard primitive Cassandra types. If your C* implementation
+clients that need to read non-standard primitive Cassandra types. If your Cassandra implementation
 uses a Java Driver which can read DataType.custom() you may need it this. If you are using
 OSS Cassandra this should never be used.</td>
 </tr>
@@ -192,8 +213,8 @@ OSS Cassandra this should never be used.</td>
 </tr>
 <tr>
   <td><code>input.join.throughput_query_per_sec</code></td>
-  <td>9223372036854775807</td>
-  <td>Maximum read throughput allowed per single core in query/s while joining RDD with C* table</td>
+  <td>2147483647</td>
+  <td>**Deprecated** Please use input.reads_per_sec. Maximum read throughput allowed per single core in query/s while joining RDD with Cassandra table</td>
 </tr>
 <tr>
   <td><code>input.metrics</code></td>
@@ -201,9 +222,14 @@ OSS Cassandra this should never be used.</td>
   <td>Sets whether to record connector specific metrics on write</td>
 </tr>
 <tr>
+  <td><code>input.reads_per_sec</code></td>
+  <td>2147483647</td>
+  <td>Sets max requests per core per second for joinWithCassandraTable and some Enterprise integrations</td>
+</tr>
+<tr>
   <td><code>input.split.size_in_mb</code></td>
   <td>64</td>
-  <td>Approx amount of data to be fetched into a Spark partition</td>
+  <td>Approx amount of data to be fetched into a Spark partition. Minimum number of resulting Spark partitions is <code>1 + 2 * SparkContext.defaultParallelism</code></td>
 </tr>
 </table>
 
@@ -280,6 +306,12 @@ finer control see the CassandraOption class</td>
   <td>*(Floating points allowed)* <br> Maximum write throughput allowed
  per single core in MB/s. <br> Limit this on long (+8 hour) runs to 70% of your max throughput
  as seen on a smaller job for stability</td>
+</tr>
+<tr>
+  <td><code>output.timestamp</code></td>
+  <td>0</td>
+  <td>Timestamp (microseconds since epoch) of the write. If not specified, the time that the
+ write occurred is used. A value of 0 means time of write.</td>
 </tr>
 <tr>
   <td><code>output.ttl</code></td>

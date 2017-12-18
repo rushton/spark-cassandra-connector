@@ -4,7 +4,6 @@ import java.io.IOException
 
 import com.datastax.spark.connector._
 import com.datastax.spark.connector.mapper.{ColumnMapper, DataFrameColumnMapper}
-import com.datastax.spark.connector.util.Logging
 import org.apache.spark.sql.DataFrame
 
 import scala.collection.JavaConversions._
@@ -14,6 +13,7 @@ import com.datastax.driver.core._
 import com.datastax.spark.connector.types.{ColumnType, CounterType}
 import com.datastax.spark.connector.util.NameTools
 import com.datastax.spark.connector.util.Quote._
+import com.datastax.spark.connector.util.Logging
 
 /** Abstract column / field definition.
   * Common to tables and user-defined types */
@@ -208,11 +208,19 @@ object TableDef {
 
   /** Constructs a table definition based on the mapping provided by
     * appropriate [[com.datastax.spark.connector.mapper.ColumnMapper]] for the given type. */
-  def fromType[T : ColumnMapper](keyspaceName: String, tableName: String): TableDef =
-    implicitly[ColumnMapper[T]].newTable(keyspaceName, tableName)
+  def fromType[T : ColumnMapper](
+    keyspaceName: String,
+    tableName: String,
+    protocolVersion: ProtocolVersion = ProtocolVersion.NEWEST_SUPPORTED): TableDef =
+    implicitly[ColumnMapper[T]].newTable(keyspaceName, tableName, protocolVersion)
 
-  def fromDataFrame(dataFrame: DataFrame, keyspaceName: String, tableName: String): TableDef =
-    new DataFrameColumnMapper(dataFrame.schema).newTable(keyspaceName, tableName)
+  def fromDataFrame(
+    dataFrame: DataFrame,
+    keyspaceName: String,
+    tableName: String,
+    protocolVersion: ProtocolVersion): TableDef =
+
+    new DataFrameColumnMapper(dataFrame.schema).newTable(keyspaceName, tableName, protocolVersion)
 }
 
 /** A Cassandra keyspace metadata that can be serialized. */

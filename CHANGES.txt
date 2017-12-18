@@ -1,4 +1,53 @@
+2.0.5
+ * Allow 'YYYY' format LocalDate
+ * Add metrics for write batch Size (SPARKC-501)
+ * Type Converters for java.time.localdate (SPARKC-495)
+
+2.0.4
+ * Includes partches up to 1.6.9
+ * Retry PoolBusy Exceptions, Throttle JWCT Calls (SPARKC-503) 
+
+2.0.3
+ * Includes patches up to 1.6.8
+
+2.0.2
+ * Protect against Size Estimate Overflows (SPARKC-492)
+ * Add java.time classes support to converters and sparkSQL(SPARKC-491)
+ * Allow Writes to Static Columnns and Partition Keys (SPARKC-470)
+
+2.0.1
+ * Refactor Custom Scan Method (SPARKC-481)
+
+2.0.0
+ * Upgrade driver version for 2.0.0 Release to 3.1.4 (SPARKC-474)
+ * Extend SPARKC-383 to All Row Readers (SPARKC-473)
+
+2.0.0 RC1
+ * Includes all patches up to 1.6.5
+ * Automatic adjustment of Max Connections (SPARKC-471)
+ * Allow for Custom Table Scan Method (SPARKC-459)
+ * Enable PerPartitionLimit (SPARKC-446)
+ * Support client certificate authentication for two-way SSL Encryption (SPARKC-359)
+ * Change Config Generation for Cassandra Runners (SPARKC-424)
+ * Remove deprecated QueryRetryDelay parameter (SPARKC-423)
+ * User ConnectionHostParam.default as default hosts String
+ * Update usages of deprecated SQLContext so that SparkSession is used instead (SPARKC-400)
+ * Test Reused Exchange SPARK-17673 (SPARKC-429)
+ * Module refactoring (SPARKC-398)
+ * Recognition of Java Driver Annotated Classes (SPARKC-427)
+ * RDD.deleteFromCassandra (SPARKC-349)
+ * Coalesce Pushdown to Cassandra (SPARKC-161)
+ * Custom Conf options in Custom Pushdowns (SPARKC-435)
+ * Upgrade CommonBeatUtils to 1.9.3 to Avoid SID-760 (SPARKC-457)
+
+2.0.0 M3
+ * Includes all patches up to 1.6.2
+
+2.0.0 M2
+ * Includes all patches up to 1.6.1
+
 2.0.0 M1
+ * Added support for left outer joins with C* table (SPARKC-181)
  * Removed CassandraSqlContext and underscore based options (SPARKC-399)
  * Upgrade to Spark 2.0.0-preview (SPARKC-396)
     - Removed Twitter demo because there is no spark-streaming-twitter package available anymore
@@ -9,27 +58,76 @@
     - Fix Spark SQL - temporarily
     - Update plugins and Scala version
 
+********************************************************************************
+
+1.6.9
+* Fix Shuffling of a Set in Local Node FirstPolicy (SPARKC-496)
+
+1.6.8
+* Fix ReplicaPartitioner Endpoint Call (SPARKC-485)
+* MultipleRetryPolicy should retry with null (SPARKC-494)
+
+1.6.7
+* Protect against overflows in Size Estimates (SPARKC-492)
+* Confirm truncation with datasource writes (SPARKC-472)
+
+1.6.6
+* Allow Writes to Static Columns and Partition Keys (SPARKC-470)
+* SessionProxy Should Proxy all Runtime Interfaces (SPARKC-476)
+* Always Use Codec Cache When Reading from Driver Rows (SPARKC-473)
+
+1.6.5
+* Optimize Spark Sql Count(*) with CassandraCount (SPARKC-412)
+* Fix Incomplete Shading of Guava (SPARKC-461)
+* Replace all Logging Dependencies from Spark-Core with Internal Class (SPARKC-460)
+* Remove Java8 Dependency in CassandraConnectorConf (SPARKC-462)
+
+1.6.4
+ * Find converters for classes on different classloaders (SPARKC-363)
+ * Fix CassandraConnector and Session Race Condition (SPARKC-441)
+ * Fixed use of connection.local_dc parameter (SPARKC-448) 
+ * Add RDD.deleteFromCassandra() method (SPARKC-349) (backport)
+ * Left join with Cassandra (SPARKC-181) (backport)
+ * CustomDriverConverter support for DataFrame Conversions (SPARKC-440)
+
+1.6.3
+ * Added SSL client authentication (SPARKC-359)
+ * Correct order of "Limit" and "orderBy" clauses in JWCT (SPARKC-433)
+ * Improved error messages on CreateCassandraTable from DataFrame (SPARKC-428)
+ * Improved backwards compatibility with older Cassandra versions
+   (SPARKC-387, SPARKC-402)
+ * Fix partitioner on Integer.MIN_VALUE (SPARKC-419)
+
+1.6.2
+ * Fixed shading in artifacts published to Maven
+
+1.6.1
+ * Disallow TimeUUID Predicate Pushdown (SPARKC-405)
+ * Avoid overflow on SplitSizeInMB param (SPARKC-413)
+ * Fix conversion of LocalDate to Joda LocalDate (SPARKC-391)
+ * Shade Guava to avoid conflict with outdated Guava in Spark (SPARKC-355)
+
 1.6.0
  * SparkSql write supports TTL per row (SPARKC-345)
  * Make Repartition by Cassandra Replica Deterministic (SPARKC-278)
- * Improved performance by caching converters and Java driver codecs 
+ * Improved performance by caching converters and Java driver codecs
    (SPARKC-383)
  * Added support for driver.LocalDate (SPARKC-385)
  * Accept predicates with indexed partition columns (SPARKC-348)
  * Retry schema checks to avoid Java Driver debouncing (SPARKC-379)
- * Fix compatibility with Cassandra 2.1.X with Single Partitions/In queries 
+ * Fix compatibility with Cassandra 2.1.X with Single Partitions/In queries
    (SPARKC-376)
  * Use executeAsync while joining with C* table (SPARKC-233)
  * Fix support for C* Tuples in Dataframes (SPARKC-357)
 
 1.6.0 M2
- * Performance improvement: keyBy creates an RDD with CassandraPartitioner 
+ * Performance improvement: keyBy creates an RDD with CassandraPartitioner
    so shuffling can be avoided in many cases, e.g. when keyBy is followed
    by groupByKey or join (SPARKC-330)
- * Improved exception message when data frame is to be saved in 
+ * Improved exception message when data frame is to be saved in
    non-empty Cassandra table (SPARKC-338)
  * Support for Joda time for Cassandra date type (SPARKC-342)
- * Don't double resolve the paths for port locks in embedded C* 
+ * Don't double resolve the paths for port locks in embedded C*
    (contribution by crakjie)
  * Drop indices that cannot be used in predicate pushdown (SPARKC-347)
  * Added support for IF NOT EXISTS (SPARKC-362)
@@ -38,7 +136,7 @@
  * Upgraded to Spark 1.6.1 (SPARKC-344)
  * Fix NoSuchElementException when fetching database schema from Cassandra
    (SPARKC-341)
- * Removed the ability to specify cluster alias directly and added some helper methods 
+ * Removed the ability to specify cluster alias directly and added some helper methods
    which make it easier to configure Cassandra related data frames (SPARKC-289)
 
 1.6.0 M1
@@ -48,6 +146,14 @@
  * Includes all patches up to 1.5.0.
 
 ********************************************************************************
+
+1.5.2
+* Find converters for classes on different classloaders (SPARKC-363)
+* Disallow TimeUUID predicate pushdown (SPARKC-405)
+* Avoid overflow on SplitSizeInMB param (SPARKC-413)
+* Fix CassandraConnector and Session Race Condition (SPARKC-441)
+* Correct Order of "limit" and "orderBy" clauses in JWCT (SPARKC-443)
+* Fixed use of connection.local_dc parameter (SPARKC-448)
 
 1.5.1
  * Includes all patches up to 1.4.4
@@ -89,6 +195,14 @@
 
 ********************************************************************************
 
+1.4.5
+* Find converters for classes on different classloaders (SPARKC-363)
+* Disallow TimeUUID predicate pushdown (SPARKC-405)
+* Avoid overflow on SplitSizeInMB param (SPARKC-413)
+* Fix CassandraConnector and Session Race Condition (SPARKC-441)
+* Correct Order of "limit" and "orderBy" clauses in JWCT (SPARKC-443)
+* Fixed use of connection.local_dc parameter (SPARKC-448)
+
 1.4.4
  * Use executeAsync when joining with C* table (SPARKC-233)
 
@@ -108,7 +222,7 @@
  * VarInt Column is converted to decimal stored in Spark SQL (SPARKC-266)
  * Retrieve TableSize from Cassandra system table for datasource relation (SPARKC-164)
  * Fix merge strategy for netty.io.properties (SPARKC-249)
- * Upgrade integration tests to use Cassandra 2.1.9 and upgrade Java Driver 
+ * Upgrade integration tests to use Cassandra 2.1.9 and upgrade Java Driver
    to 2.1.7.1, Spark to 1.4.1 (SPARKC-248)
  * Make OptionConverter handle Nones as well as nulls (SPARKC-275)
 
@@ -123,7 +237,7 @@
  * Reduced the amount of unneccessary error logging in integration tests (SPARKC-223)
  * Fixed Repartition and JWC and Streaming Checkpointing broken by serialization
    errors related to passing RowWriteFactory / DefaultRowWriter (SPARKC-202)
- * Fixed exceptions occuring when performing RDD operations on any 
+ * Fixed exceptions occuring when performing RDD operations on any
    CassandraTableScanJavaRDD (SPARKC-236)
 
 1.4.0 M3
@@ -145,6 +259,9 @@
  * Added support timestamp in collection, udt and tuples (SPARKC-254)
 
 ********************************************************************************
+
+ * Fixed use of connection.local_dc parameter (SPARKC-448)
+ * Added support timestamp in collection, udt and tuples (SPARKC-254)
 
 1.3.1
  * Remove wrapRDD from CassandraTableScanJavaRDD. Fixes exception occuring
@@ -200,6 +317,9 @@
 
 ********************************************************************************
 
+ * Fixed use of connection.local_dc parameter (SPARKC-448)
+
+1.2.6
  * Fixed Default ReadConf for JoinWithCassandra Table (SPARKC-294)
  * Added refresh cassandra schema cache to CassandraSQLContext (SPARKC-234)
 
